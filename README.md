@@ -113,11 +113,46 @@ The frontend will be available at `http://localhost:5173`
 |--------|----------|-------------|---------------|
 | POST | `/api/auth/login` | Admin login | No |
 | GET | `/api/articles` | List articles (with pagination and tag filter) | No |
+| POST | `/api/articles/batch` | Run multiple list/detail queries in one request | No |
 | GET | `/api/articles/:id` | Get single article | No |
 | POST | `/api/articles` | Create new article | Yes |
 | PUT | `/api/articles/:id` | Update article | Yes |
 | DELETE | `/api/articles/:id` | Delete article | Yes |
 | GET | `/api/tags` | Get all unique tags | No |
+
+### Batch article queries
+
+`POST /api/articles/batch` checks multiple query combinations in a single
+submission. Each entry is either a list query (same parameters as
+`GET /api/articles`) or a detail query (`{ "id": ... }`, same result as
+`GET /api/articles/:id`):
+
+```json
+{
+  "queries": [
+    { "tag": "前端", "page": 1, "limit": 2 },
+    { "search": "Vue", "page": 1 },
+    { "id": 1 },
+    { "id": 9999 }
+  ]
+}
+```
+
+The response contains exactly one result per query, at the same index, each
+with its own `success` flag. List payloads keep the existing
+`{ articles, pagination }` shape and detail payloads keep the existing
+article shape (including the `tags` array), so one failed entry never shifts
+or invalidates the other results:
+
+```json
+{
+  "results": [
+    { "index": 0, "type": "list", "success": true, "data": { "articles": [], "pagination": {} } },
+    { "index": 2, "type": "detail", "success": true, "data": { "id": 1, "tags": [] } },
+    { "index": 3, "type": "detail", "success": false, "error": "Article not found" }
+  ]
+}
+```
 
 ## Admin Credentials
 
