@@ -1,7 +1,8 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, '..', 'data', 'blog.db');
+// Tests can point the database at a throwaway file so the seeded one is never touched.
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'blog.db');
 
 let db;
 

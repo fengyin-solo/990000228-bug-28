@@ -27,4 +27,13 @@ api.interceptors.response.use(
   }
 )
 
+/**
+ * Submit several read queries (list / detail / tags) in one request.
+ * Every result echoes its `key`, so callers merge by key — never by
+ * array position — and one failed query does not fail the others.
+ */
+export function fetchBatch(queries, config = {}) {
+  return api.post('/articles/batch', { queries }, config).then((response) => response.data)
+}
+
 export default api

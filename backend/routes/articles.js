@@ -1,63 +1,57 @@
 const express = require('express');
 const { getDb } = require('../db/init');
 const { authenticateToken } = require('../middleware/auth');
+const {
+  MAX_BATCH_QUERIES,
+  QueryError,
+  normalizeListInput,
+  queryArticleList,
+  queryArticleDetail,
+  queryTags,
+  runBatch
+} = require('../services/articleQueries');
 
 const router = express.Router();
+
+// POST /api/articles/batch - Run several read queries in one submission.
+// Registered before "/"; partial failures are reported per result item,
+// so this endpoint answers 200 as long as the batch itself is well formed.
+router.post('/batch', (req, res) => {
+  const db = getDb();
+  const { queries } = req.body || {};
+
+  if (!Array.isArray(queries)) {
+    return res.status(400).json({ error: 'queries must be an array' });
+  }
+  if (queries.length === 0) {
+    return res.status(400).json({ error: 'queries must not be empty' });
+  }
+  if (queries.length > MAX_BATCH_QUERIES) {
+    return res
+      .status(400)
+      .json({ error: `at most ${MAX_BATCH_QUERIES} queries are allowed per batch` });
+  }
+
+  try {
+    const batch = runBatch(db, queries);
+    return res.json(batch);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to run batch query' });
+  }
+});
 
 // GET /api/articles - List articles with pagination, tag filter and search
 router.get('/', (req, res) => {
   const db = getDb();
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
-  const tag = req.query.tag || null;
-  const search = req.query.search || null;
-  const offset = (page - 1) * limit;
-
-  let countQuery, articlesQuery;
-  let params = [];
-  let countParams = [];
-  let whereClauses = [];
-
-  if (tag) {
-    whereClauses.push(`',' || tags || ',' LIKE ?`);
-    params.push(`%,${tag},%`);
-    countParams.push(`%,${tag},%`);
-  }
-
-  if (search) {
-    whereClauses.push(`(title LIKE ? OR summary LIKE ?)`);
-    const searchTerm = `%${search}%`;
-    params.push(searchTerm, searchTerm);
-    countParams.push(searchTerm, searchTerm);
-  }
-
-  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-
-  countQuery = `SELECT COUNT(*) as total FROM articles ${whereSql}`;
-  articlesQuery = `SELECT id, title, summary, tags, created_at, updated_at FROM articles ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
-  params.push(limit, offset);
 
   try {
-    const { total } = db.prepare(countQuery).get(...countParams);
-    const articles = db.prepare(articlesQuery).all(...params);
-
-    const parsedArticles = articles.map(article => ({
-      ...article,
-      tags: article.tags ? article.tags.split(',').map(t => t.trim()) : []
-    }));
-
-    res.json({
-      articles: parsedArticles,
-      pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit)
-      }
-    });
+    const normalized = normalizeListInput(req.query, { strict: false });
+    const data = queryArticleList(db, normalized);
+    return res.json(data);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to fetch articles' });
+    return res.status(500).json({ error: 'Failed to fetch articles' });
   }
 });
 
@@ -67,19 +61,14 @@ router.get('/:id', (req, res) => {
   const { id } = req.params;
 
   try {
-    const article = db.prepare('SELECT * FROM articles WHERE id = ?').get(id);
-
-    if (!article) {
-      return res.status(404).json({ error: 'Article not found' });
-    }
-
-    res.json({
-      ...article,
-      tags: article.tags ? article.tags.split(',').map(t => t.trim()) : []
-    });
+    const { article } = queryArticleDetail(db, id);
+    return res.json(article);
   } catch (err) {
+    if (err instanceof QueryError) {
+      return res.status(err.status).json({ error: err.message });
+    }
     console.error(err);
-    res.status(500).json({ error: 'Failed to fetch article' });
+    return res.status(500).json({ error: 'Failed to fetch article' });
   }
 });
 
@@ -173,20 +162,8 @@ function getTags(req, res) {
   const db = getDb();
 
   try {
-    const articles = db.prepare('SELECT tags FROM articles WHERE tags IS NOT NULL AND tags != ""').all();
-    const tagSet = new Set();
-
-    articles.forEach(article => {
-      if (article.tags) {
-        article.tags.split(',').forEach(tag => {
-          const trimmed = tag.trim();
-          if (trimmed) tagSet.add(trimmed);
-        });
-      }
-    });
-
-    const tags = Array.from(tagSet).sort();
-    res.json({ tags });
+    const data = queryTags(db);
+    res.json(data);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch tags' });

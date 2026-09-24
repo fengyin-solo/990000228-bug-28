@@ -37,7 +37,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import { marked } from 'marked'
@@ -48,6 +48,10 @@ const router = useRouter()
 
 const article = ref(null)
 const loading = ref(false)
+
+// identity of the latest request; stale responses are dropped so the
+// detail shown always matches the article in the current route
+let requestSeq = 0
 
 // Configure marked
 marked.setOptions({
@@ -61,19 +65,31 @@ const renderedContent = computed(() => {
 })
 
 onMounted(() => {
-  fetchArticle()
+  fetchArticle(route.params.id)
 })
 
-async function fetchArticle() {
+watch(
+  () => route.params.id,
+  (id) => {
+    if (id) fetchArticle(id)
+  }
+)
+
+async function fetchArticle(id) {
+  const seq = ++requestSeq
   loading.value = true
   try {
-    const { id } = route.params
     const response = await api.get(`/articles/${id}`)
+    if (seq !== requestSeq) return
     article.value = response.data
   } catch (error) {
+    if (seq !== requestSeq) return
+    article.value = null
     console.error('Failed to fetch article:', error)
   } finally {
-    loading.value = false
+    if (seq === requestSeq) {
+      loading.value = false
+    }
   }
 }
 
